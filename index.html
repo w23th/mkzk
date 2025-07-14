@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>营脚煤矿钻孔数据分析系统</title>
+    <title>营脚煤矿钻孔数据分析系统8888</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0/dist/chartjs-plugin-annotation.min.js"></script>
@@ -306,6 +306,8 @@
             border-radius: 10px;
             border: 1px solid rgba(255, 255, 255, 0.1);
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            max-height: 500px;
+            overflow-y: auto;
         }
         
         .data-table {
@@ -656,6 +658,42 @@
             margin-top: 5px;
         }
         
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .pagination button {
+            background: rgba(35, 55, 75, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #e0e0e0;
+            padding: 5px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .pagination button:hover {
+            background: rgba(52, 152, 219, 0.6);
+        }
+        
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .pagination-info {
+            display: flex;
+            align-items: center;
+            font-size: 0.9rem;
+        }
+        
+        .virtual-scroll-placeholder {
+            height: 1px;
+        }
+        
         /* 响应式调整 */
         @media (max-width: 1200px) {
             .charts-grid, .pie-charts-container {
@@ -776,6 +814,10 @@
                 <div class="status-item">
                     <i class="fas fa-exclamation-triangle"></i>
                     <span>浓度超30%钻孔: <span id="exceed-count">5</span></span>
+                </div>
+                <div class="status-item">
+                    <i class="fas fa-cloud-download-alt"></i>
+                    <span>数据模式: <span id="data-mode">JSON分页</span></span>
                 </div>
             </div>
         </div>
@@ -957,7 +999,7 @@
                 <div class="loading-text">正在加载钻孔数据...</div>
             </div>
             <h3><i class="fas fa-table"></i> 钻孔详细数据 - <span class="drill-id">A-1</span></h3>
-            <div class="data-table-container">
+            <div class="data-table-container" id="data-table-container">
                 <table class="data-table">
                     <thead>
                         <tr>
@@ -978,6 +1020,19 @@
                         <!-- 动态填充 -->
                     </tbody>
                 </table>
+            </div>
+            <div class="pagination">
+                <button id="prev-page" disabled><i class="fas fa-chevron-left"></i></button>
+                <div class="pagination-info">
+                    <span>页码: </span>
+                    <span id="current-page">1</span>
+                    <span> / </span>
+                    <span id="total-pages">1</span>
+                    <span> (共 </span>
+                    <span id="total-records">0</span>
+                    <span> 条记录)</span>
+                </div>
+                <button id="next-page" disabled><i class="fas fa-chevron-right"></i></button>
             </div>
         </div>
         
@@ -1016,6 +1071,7 @@
             <p><i class="fas fa-check"></i> 今日瓦斯浓度超过30%的钻孔编号已标红显示</p>
             <p><i class="fas fa-check"></i> 虚线表示数据缺失点，用于显示趋势</p>
             <p><i class="fas fa-check"></i> 顺层钻孔与穿层钻孔检测周期为一周，高位钻孔为每日检测</p>
+            <p><i class="fas fa-check"></i> 表格数据使用分页加载技术，支持大数据量高效展示</p>
         </div>
         
         <div class="footer">
@@ -1048,6 +1104,12 @@
         const loadingProgress = document.getElementById('loading-progress');
         const singleDisplayBtn = document.getElementById('single-display');
         const groupDisplayBtn = document.getElementById('group-display');
+        const prevPageBtn = document.getElementById('prev-page');
+        const nextPageBtn = document.getElementById('next-page');
+        const currentPageElement = document.getElementById('current-page');
+        const totalPagesElement = document.getElementById('total-pages');
+        const totalRecordsElement = document.getElementById('total-records');
+        const dataModeElement = document.getElementById('data-mode');
         
         // 指标卡元素
         const avgPressureElement = document.getElementById('avg-pressure');
@@ -1070,12 +1132,18 @@
         let currentUnit = '一单元';
         let currentSelection = ''; // 当前选择的孔号或组
         
+        // 分页相关变量
+        const PAGE_SIZE = 50;
+        let currentPage = 1;
+        let totalPages = 1;
+        let totalRecords = 0;
+        
         // 数据索引
         let singleDrillIndex = {};
         let groupDrillIndex = {};
         
-        // CSV文件路径
-        const CSV_FILE_PATH = 'data.csv';
+        // 数据文件路径
+        const DATA_JSON_PATH = 'data.json';
         
         // 获取今天的日期（YYYY-MM-DD格式）
         function getTodayDate() {
@@ -1113,59 +1181,16 @@
             }
         }
         
-        // 解析CSV数据
-        function parseCSV(csvText) {
-            const lines = csvText.split('\n').filter(line => line.trim() !== '');
-            const headers = lines[0].split(',').map(header => header.trim());
-            
-            const data = [];
-            for (let i = 1; i < lines.length; i++) {
-                const values = lines[i].split(',');
-                const entry = {};
-                
-                for (let j = 0; j < headers.length; j++) {
-                    let value = values[j] ? values[j].trim() : '';
-                    
-                    // 转换数值类型
-                    if (['负压', '瓦斯浓度', '混合流量', '方位', '倾角', '孔深'].includes(headers[j])) {
-                        value = value === '' ? null : parseFloat(value);
-                    }
-                    
-                    // 标准化日期格式
-                    if (headers[j] === '检测日期' && value) {
-                        const dateParts = value.split('/');
-                        if (dateParts.length === 3) {
-                            const year = dateParts[0];
-                            const month = dateParts[1].padStart(2, '0');
-                            const day = dateParts[2].padStart(2, '0');
-                            value = `${year}-${month}-${day}`;
-                        }
-                    }
-                    
-                    entry[headers[j]] = value;
-                }
-                
-                // 添加抽采组数默认值
-                if (!entry['抽采组数'] || entry['抽采组数'] === '') {
-                    entry['抽采组数'] = 'N/A';
-                }
-                
-                data.push(entry);
-            }
-            
-            return data;
-        }
-        
-        // 将CSV数据转换为按钻孔分组的数据结构
-        function groupDataByDrill(csvData) {
+        // 解析JSON数据
+        function parseJSONData(jsonData) {
             const groupedData = {};
             
             // 找到最新数据日期
-            const dates = csvData.map(item => item['检测日期']).filter(d => d);
+            const dates = jsonData.map(item => item['检测日期']).filter(d => d);
             latestDataDate = dates.length > 0 ? dates.reduce((a, b) => a > b ? a : b) : getTodayDate();
             
             // 按钻孔唯一标识分组
-            csvData.forEach(item => {
+            jsonData.forEach(item => {
                 // 创建唯一键：区域 + 单元/组数 + 钻孔编号
                 const unitGroupKey = item['抽采单元'] || item['抽采组数'] || '';
                 const drillKey = `${item['抽采区域']}|${unitGroupKey}|${item['钻孔编号']}`;
@@ -1348,13 +1373,12 @@
             updateStatus('正在加载数据文件...', 'loading');
             
             try {
-                // 加载CSV文件
-                const response = await fetch(CSV_FILE_PATH);
+                // 加载JSON文件
+                const response = await fetch(DATA_JSON_PATH);
                 if (!response.ok) throw new Error(`网络响应错误: ${response.status}`);
                 
-                const csvText = await response.text();
-                const csvData = parseCSV(csvText);
-                allDrillData = groupDataByDrill(csvData);
+                const jsonData = await response.json();
+                allDrillData = parseJSONData(jsonData);
                 
                 // 构建数据索引
                 buildDataIndexes(allDrillData);
@@ -1366,6 +1390,7 @@
                 // 设置最后更新日期
                 lastUpdateElement.textContent = latestDataDate;
                 lastUpdateFooter.textContent = latestDataDate;
+                dataModeElement.textContent = 'JSON分页';
                 
                 // 设置事件监听
                 areaSelect.addEventListener('change', (e) => {
@@ -1423,6 +1448,21 @@
                     updateStatus('显示模式已变更...', 'loading');
                 });
                 
+                // 分页按钮事件
+                prevPageBtn.addEventListener('click', () => {
+                    if (currentPage > 1) {
+                        currentPage--;
+                        updateDataTable();
+                    }
+                });
+                
+                nextPageBtn.addEventListener('click', () => {
+                    if (currentPage < totalPages) {
+                        currentPage++;
+                        updateDataTable();
+                    }
+                });
+                
                 // 初始设置
                 updateDrillTypeOptions();
                 updateUnitControl();
@@ -1458,6 +1498,7 @@
                 // 应用按钮事件监听
                 applyBtn.addEventListener('click', () => {
                     updateStatus('处理数据中...', 'loading');
+                    currentPage = 1; // 重置到第一页
                     updateChartsAndTable();
                 });
                 
@@ -1474,7 +1515,7 @@
                         <h2 style="color:#e74c3c;">数据加载失败</h2>
                         <p style="color:#f0f0f0; max-width:500px; text-align:center;">
                             无法加载数据文件: ${error.message}<br>
-                            请确保data.csv文件存在且格式正确
+                            请确保data.json文件存在且格式正确
                         </p>
                         <button id="retry-btn" class="btn-apply" style="margin-top:20px;">
                             <i class="fas fa-redo"></i> 重新加载
@@ -1772,7 +1813,7 @@
                 updatePieCharts(dataToDisplay);
                 
                 // 更新表格
-                updateDataTable(dataToDisplay, startDate, endDate);
+                updateDataTable();
                 
                 // 更新指标卡
                 updateMetrics(dataToDisplay);
@@ -1848,42 +1889,65 @@
             minConcentrationElement.textContent = minConcentration !== 100 ? `${minConcentration.toFixed(2)}%` : '无数据';
         }
         
-        // 更新表格
-        function updateDataTable(dataToDisplay, startDate, endDate) {
+        // 更新表格（分页版本）
+        function updateDataTable() {
+            const startDate = startDateInput.value;
+            const endDate = endDateInput.value;
+            const dataToDisplay = getDataToDisplay();
+            
+            // 收集所有数据
+            const allData = [];
+            dataToDisplay.forEach(drill => {
+                drill.dates.forEach((date, index) => {
+                    if (date >= startDate && date <= endDate) {
+                        allData.push({
+                            date,
+                            drillId: drill['钻孔编号'],
+                            azimuth: drill['方位'],
+                            dip: drill['倾角'],
+                            depth: drill['孔深'],
+                            initialDate: drill.initialDate,
+                            initialConcentration: drill.initialConcentration,
+                            initialPressure: drill.initialPressure,
+                            pressure: drill.pressure[index],
+                            concentration: drill.concentration[index],
+                            flow: drill.flow[index]
+                        });
+                    }
+                });
+            });
+            
+            // 按日期排序
+            allData.sort((a, b) => a.date.localeCompare(b.date));
+            
+            // 更新分页信息
+            totalRecords = allData.length;
+            totalPages = Math.ceil(totalRecords / PAGE_SIZE);
+            currentPage = Math.min(currentPage, totalPages);
+            if (currentPage < 1) currentPage = 1;
+            
+            // 更新分页UI
+            currentPageElement.textContent = currentPage;
+            totalPagesElement.textContent = totalPages;
+            totalRecordsElement.textContent = totalRecords;
+            
+            prevPageBtn.disabled = currentPage <= 1;
+            nextPageBtn.disabled = currentPage >= totalPages;
+            
+            // 获取当前页数据
+            const startIndex = (currentPage - 1) * PAGE_SIZE;
+            const endIndex = Math.min(startIndex + PAGE_SIZE, totalRecords);
+            const pageData = allData.slice(startIndex, endIndex);
+            
+            // 填充表格
             const fragment = document.createDocumentFragment();
             
-            if (dataToDisplay.length === 0) {
+            if (pageData.length === 0) {
                 const row = document.createElement('tr');
                 row.innerHTML = `<td colspan="11" style="text-align: center; padding: 30px;">在选定日期范围内没有找到数据</td>`;
                 fragment.appendChild(row);
             } else {
-                // 按日期排序所有数据
-                const allData = [];
-                dataToDisplay.forEach(drill => {
-                    drill.dates.forEach((date, index) => {
-                        if (date >= startDate && date <= endDate) {
-                            allData.push({
-                                date,
-                                drillId: drill['钻孔编号'],
-                                azimuth: drill['方位'],
-                                dip: drill['倾角'],
-                                depth: drill['孔深'],
-                                initialDate: drill.initialDate,
-                                initialConcentration: drill.initialConcentration,
-                                initialPressure: drill.initialPressure,
-                                pressure: drill.pressure[index],
-                                concentration: drill.concentration[index],
-                                flow: drill.flow[index]
-                            });
-                        }
-                    });
-                });
-                
-                // 按日期排序
-                allData.sort((a, b) => a.date.localeCompare(b.date));
-                
-                // 填充表格
-                allData.forEach(item => {
+                pageData.forEach(item => {
                     const row = document.createElement('tr');
                     
                     // 如果瓦斯浓度超过85%，添加高亮样式
